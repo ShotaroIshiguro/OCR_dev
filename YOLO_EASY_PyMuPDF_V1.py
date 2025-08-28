@@ -12,7 +12,7 @@ import csv
 # ▼▼▼ 使用者変更箇所 ▼▼▼
 # ----------------------------------------------------------------
 # 1. PDFファイルが格納されているディレクトリのパス
-INPUT_DIR = "../検証用pdfデータ"
+INPUT_DIR = "./テストファイル"
 
 # 2. 全ての出力（画像、JSON）を保存する親ディレクトリ
 OUTPUT_DIR = "output_files_V1" # 保存先フォルダ名を変更
@@ -24,7 +24,7 @@ PDF_DPI = 300
 LANGUAGES = ['ja', 'en']
 
 # 5. YOLOv10モデルファイルのパス (ローカル)
-YOLO_MODEL_PATH = "../doclayout_yolo_docstructbench_imgsz1024.pt"
+YOLO_MODEL_PATH = "doclayout_yolo_docstructbench_imgsz1024.pt"
 
 # 6. YOLO領域拡張量 (ピクセル)
 YOLO_EXPAND_PIXELS = 30

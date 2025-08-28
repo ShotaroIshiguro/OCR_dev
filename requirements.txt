@@ -1,0 +1,24 @@
+# --- Core Libraries ---
+# For PDF processing
+PyMuPDF
+
+# For image processing
+opencv-python
+
+# For OCR (Optical Character Recognition)
+easyocr
+
+# For YOLOv10 object detection
+ultralytics
+
+# --- Dependencies (often installed automatically, but listed for clarity) ---
+# Required by scientific computing libraries
+numpy
+
+# Deep learning framework required by easyocr and ultralytics
+torch
+torchvision
+
+doclayout-yolo
+huggingface-hub
+huggingface
