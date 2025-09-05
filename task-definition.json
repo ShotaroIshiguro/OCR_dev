@@ -1,5 +1,5 @@
 {
-  "family": "my-python-app-task",
+  "family": "my-python-app-task-test",
   "taskRoleArn": "arn:aws:iam::220749297321:role/ECSTaskSSMRole-test",
   "networkMode": "bridge",
   "containerDefinitions": [
