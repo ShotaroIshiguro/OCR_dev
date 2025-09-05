@@ -1,10 +1,10 @@
 {
   "family": "my-python-app-task",
-  "taskRoleArn": "arn:aws:iam::220749297321:role/ECSTaskSSMRole",
+  "taskRoleArn": "arn:aws:iam::220749297321:role/ECSTaskSSMRole-test",
   "networkMode": "bridge",
   "containerDefinitions": [
     {
-      "name": "my-python-app-container",
+      "name": "my-python-app-container-test",
       "image": "IMAGE_URI_PLACEHOLDER",
       "portMappings": [
         {
