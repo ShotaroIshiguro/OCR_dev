@@ -17,7 +17,7 @@
       "logConfiguration": {
           "logDriver": "awslogs",
           "options": {
-              "awslogs-group": "/ecs/my-python-app",
+              "awslogs-group": "/ecs/my-python-app-task-test",
               "awslogs-region": "ap-southeast-2",
               "awslogs-stream-prefix": "ecs"
           }
