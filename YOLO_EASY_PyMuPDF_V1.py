@@ -27,7 +27,17 @@ LANGUAGES = ['ja', 'en']
 YOLO_MODEL_PATH = "doclayout_yolo_docstructbench_imgsz1024.pt"
 
 # 6. YOLO領域拡張量 (ピクセル)
-YOLO_EXPAND_PIXELS = 30
+YOLO_EXPAND_PIXELS_X = 50 # 横方向の拡張量
+YOLO_EXPAND_PIXELS_Y = 50 # 縦方向の拡張量
+
+# 8. nonYOLOテキストのグループ化しきい値 (ピクセル)
+NON_YOLO_LINE_MERGE_H_THRESHOLD = 100 # 同じ行の単語を結合する際の水平方向の最大ギャップ
+NON_YOLO_LINE_MERGE_V_THRESHOLD = 50  # 同じ行の単語を結合する際の垂直方向の最大ギャップ
+NON_YOLO_PARA_MERGE_V_THRESHOLD = 50  # 段落内の行を結合する際の垂直方向の最大ギャップ
+NON_YOLO_PARA_MIN_X_OVERLAP_RATIO = 0.01 # 段落内の行とみなすための最小の水平重なり率 (1%)
+
+# 9. nonYOLOグループ化前のソート時のY座標許容誤差 (ピクセル)
+GROUPING_SORT_Y_TOLERANCE = 30 # このピクセル内のY座標の差は同じ行とみなしてソートする
 
 # 7. YOLO重複領域とみなす重なり率のしきい値
 OVERLAP_THRESHOLD = 0.9
@@ -65,6 +75,136 @@ def filter_overlapping_boxes(boxes, threshold):
     final_indices_to_keep = [idx for idx in range(len(boxes)) if idx not in suppressed_indices]
     return boxes[final_indices_to_keep]
 
+# ▼▼▼【追加】▼▼▼ nonYOLOテキストをグループ化する関数
+def group_non_yolo_ocr_results(unassigned_ocr_results):
+    """
+    未割り当てのOCR結果（nonYOLO候補）を、まず単語を行に、次に行を段落に結合する。
+    """
+    if not unassigned_ocr_results:
+        return []
+
+    # 1. OCR結果を扱いやすい形式に変換し、中心座標を追加
+    boxes = []
+    for i, (ocr_bbox, ocr_text, ocr_prob) in enumerate(unassigned_ocr_results):
+        points = np.array(ocr_bbox)
+        xmin, ymin = np.min(points, axis=0)
+        xmax, ymax = np.max(points, axis=0)
+        center_x = (xmin + xmax) / 2
+        center_y = (ymin + ymax) / 2
+        boxes.append({'id': i, 'bbox': [xmin, ymin, xmax, ymax], 'text': ocr_text, 'points': points.tolist(), 'center': (center_x, center_y)})
+
+    # 2. 近接度と配置関係に基づいて隣接リストを構築
+    adj = {box['id']: [] for box in boxes}
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            b1 = boxes[i]
+            b2 = boxes[j]
+            box1, box2 = b1['bbox'], b2['bbox']
+
+            # 条件A: 同じ行にあるか (垂直ギャップが小さく、水平ギャップが小さい)
+            vertical_gap_line = max(0, box2[1] - box1[3], box1[1] - box2[3])
+            is_vertically_aligned_for_line = vertical_gap_line < NON_YOLO_LINE_MERGE_V_THRESHOLD
+            
+            horizontal_gap_line = max(0, box2[0] - box1[2], box1[0] - box2[2])
+            is_horizontally_close_for_line = horizontal_gap_line < NON_YOLO_LINE_MERGE_H_THRESHOLD
+
+            if is_vertically_aligned_for_line and is_horizontally_close_for_line:
+                adj[b1['id']].append(b2['id'])
+                adj[b2['id']].append(b1['id'])
+                continue
+
+            # 条件B: 段落内の別の行か (垂直ギャップが小さく、水平に重なっている)
+            vertical_gap_para = max(0, box2[1] - box1[3], box1[1] - box2[3])
+            is_vertically_close_for_para = vertical_gap_para < NON_YOLO_PARA_MERGE_V_THRESHOLD
+
+            overlap_x = max(0, min(box1[2], box2[2]) - max(box1[0], box2[0]))
+            min_width = min(box1[2] - box1[0], box2[2] - box2[0])
+            is_horizontally_aligned_for_para = (min_width > 0 and (overlap_x / min_width) > NON_YOLO_PARA_MIN_X_OVERLAP_RATIO)
+
+            if is_vertically_close_for_para and is_horizontally_aligned_for_para:
+                adj[b1['id']].append(b2['id'])
+                adj[b2['id']].append(b1['id'])
+
+    # 3. 連結成分（グループ）を探索 (深さ優先探索 - DFS)
+    visited = set()
+    groups = []
+    for box in boxes:
+        box_id = box['id']
+        if box_id not in visited:
+            component_indices = []
+            stack = [box_id]
+            visited.add(box_id)
+            while stack:
+                node_idx = stack.pop()
+                component_indices.append(node_idx)
+                for neighbor_idx in adj[node_idx]:
+                    if neighbor_idx not in visited:
+                        visited.add(neighbor_idx)
+                        stack.append(neighbor_idx)
+            groups.append(component_indices)
+
+    # 4. 各グループ内のボックスを結合
+    grouped_blocks = []
+    id_to_box_map = {box['id']: box for box in boxes}
+    for group_indices in groups:
+        component_boxes = [id_to_box_map[i] for i in group_indices]
+        
+        # 新しいソートロジック: 行単位でグループ化し、行内をX座標、行間をY座標でソート
+        if not component_boxes:
+            continue
+
+        # 1. Y座標で大まかにソート
+        y_sorted_boxes = sorted(component_boxes, key=lambda b: b['center'][1])
+
+        # 2. Y座標が近いものを「行」としてグループ化
+        lines = []
+        if y_sorted_boxes:
+            current_line = [y_sorted_boxes[0]]
+            for i in range(1, len(y_sorted_boxes)):
+                # 行の平均Y座標を基準にする
+                line_avg_y = sum(b['center'][1] for b in current_line) / len(current_line)
+                current_box = y_sorted_boxes[i]
+                
+                # 現在のボックスのY座標が、行の平均Y座標から許容誤差内であれば同じ行とみなす
+                if abs(current_box['center'][1] - line_avg_y) < GROUPING_SORT_Y_TOLERANCE:
+                    current_line.append(current_box)
+                else:
+                    lines.append(current_line)
+                    current_line = [current_box]
+            lines.append(current_line) # 最後の行を追加
+
+        # 3. 各行内をX座標でソートし、最終的なリストを構築
+        sorted_component_boxes = []
+        for line in lines:
+            sorted_line = sorted(line, key=lambda b: b['center'][0])
+            sorted_component_boxes.extend(sorted_line)
+        
+        all_points = [p for box in sorted_component_boxes for p in box['points']]
+        all_texts = [box['text'] for box in sorted_component_boxes]
+        
+        # グループ内に有効な座標ポイントがない場合はスキップ
+        if not all_points:
+            continue
+            
+        # 結合後のバウンディングボックスを計算
+        final_points = np.array(all_points)
+        final_xmin, final_ymin = np.min(final_points, axis=0)
+        final_xmax, final_ymax = np.max(final_points, axis=0)
+        
+        final_box_xyxy = [int(final_xmin), int(final_ymin), int(final_xmax), int(final_ymax)]
+        final_box_center = (final_xmin + final_xmax) / 2, (final_ymin + final_ymax) / 2
+        final_text = " ".join(all_texts).strip()
+
+        grouped_blocks.append({
+            "label": "nonYOLO", "confidence": 0, "box_xyxy": final_box_xyxy,
+            "box_top_left": (final_box_xyxy[0], final_box_xyxy[1]),
+            "box_bottom_right": (final_box_xyxy[2], final_box_xyxy[3]),
+            "box_area": int((final_xmax - final_xmin) * (final_ymax - final_ymin)),
+            "easyocr_text": final_text, "box_center": final_box_center
+        })
+        
+    return grouped_blocks
+
 # ▼▼▼【追加】▼▼▼ EasyOCRでの処理を関数として独立させる
 def process_page_with_easyocr(reader_ocr, img_cv2, filtered_yolo_boxes, yolo_res, pdf_output_dir, page_image_name, img_h, img_w):
     """EasyOCRを使用してページを詳細に解析し、結果を保存する"""
@@ -79,11 +219,12 @@ def process_page_with_easyocr(reader_ocr, img_cv2, filtered_yolo_boxes, yolo_res
         class_id, conf, coords = int(box.cls), float(box.conf), [int(c) for c in box.xyxy[0]]
         label = yolo_res.names[class_id]
         xmin, ymin, xmax, ymax = coords
-        expanded_xmin = max(0, xmin - YOLO_EXPAND_PIXELS)
-        expanded_ymin = max(0, ymin - YOLO_EXPAND_PIXELS)
-        expanded_xmax = min(img_w, xmax + YOLO_EXPAND_PIXELS)
-        expanded_ymax = min(img_h, ymax + YOLO_EXPAND_PIXELS)
+        expanded_xmin = max(0, xmin - YOLO_EXPAND_PIXELS_X)
+        expanded_ymin = max(0, ymin - YOLO_EXPAND_PIXELS_Y)
+        expanded_xmax = min(img_w, xmax + YOLO_EXPAND_PIXELS_X)
+        expanded_ymax = min(img_h, ymax + YOLO_EXPAND_PIXELS_Y)
         
+        box_center = (xmin + xmax) / 2, (ymin + ymax) / 2
         texts_in_this_box = []
         for i, (ocr_bbox, ocr_text, ocr_prob) in enumerate(ocr_results):
             if i in assigned_ocr_indices: continue
@@ -96,24 +237,44 @@ def process_page_with_easyocr(reader_ocr, img_cv2, filtered_yolo_boxes, yolo_res
         
         yolo_data_for_json.append({
             "label": label, "confidence": round(conf, 4), "box_xyxy": coords,
-            "box_leftup": coords[0] + coords[1], "box_area": (coords[2] - coords[0]) * (coords[3] - coords[1]),
-            "easyocr_text": " ".join(texts_in_this_box)
+            "box_top_left": (coords[0], coords[1]),
+            "box_bottom_right": (coords[2], coords[3]),
+            "box_area": (coords[2] - coords[0]) * (coords[3] - coords[1]), "easyocr_text": " ".join(texts_in_this_box).strip(),
+            "box_center": box_center
         })
 
     # 未割り当てOCRテキストの救済
+    unassigned_ocr_results = []
     for i, (ocr_bbox, ocr_text, ocr_prob) in enumerate(ocr_results):
         if i not in assigned_ocr_indices:
-            points = np.array(ocr_bbox, dtype=int)
-            box_xmin, box_ymin = np.min(points, axis=0)
-            box_xmax, box_ymax = np.max(points, axis=0)
-            yolo_data_for_json.append({
-                "label": "nonYOLO", "confidence": 0, "box_xyxy": [int(b) for b in [box_xmin, box_ymin, box_xmax, box_ymax]],
-                "box_leftup": int(box_xmin + box_ymin), "box_area": int((box_xmax - box_xmin) * (box_ymax - box_ymin)),
-                "easyocr_text": ocr_text
-            })
+            unassigned_ocr_results.append((ocr_bbox, ocr_text, ocr_prob))
+    
+    # nonYOLO候補をグループ化して追加
+    grouped_non_yolo_data = group_non_yolo_ocr_results(unassigned_ocr_results)
+    if grouped_non_yolo_data:
+        print("    🤝 nonYOLOテキストのグループ化結果:")
+        for item in grouped_non_yolo_data:
+            print(f"      -> \"{item['easyocr_text']}\"")
+            
+    yolo_data_for_json.extend(grouped_non_yolo_data)
+
     
     # JSONと画像の保存
-    sorted_yolo_data = sorted(yolo_data_for_json, key=lambda x: x['box_leftup'])
+    # 新しいソートルール: x_leftup + y_leftup * (image_y / image_x)
+    if yolo_data_for_json:
+        # 画像のアスペクト比を計算 (ゼロ除算を防止)
+        aspect_ratio = (img_h / img_w) if img_w > 0 else 1
+
+        def sort_key(item):
+            # box_top_left は (x_leftup, y_leftup) のタプル
+            x_leftup = item['box_top_left'][0]
+            y_leftup = item['box_top_left'][1]
+            return x_leftup + y_leftup * aspect_ratio
+
+        sorted_yolo_data = sorted(yolo_data_for_json, key=sort_key)
+    else:
+        sorted_yolo_data = []
+
     final_processed_data = []
     label_counters = {}
     for item in sorted_yolo_data:
@@ -202,7 +363,15 @@ def main():
                         print("    -> PyMuPDFでテキストを抽出しました。")
                         summary_data[pdf_filename_base]['pymupdf_pages'] += 1
                         
-                        final_processed_data = [{"label": "plain_text_1", "confidence": 1.0, "box_xyxy": [0, 0, img_w, img_h], "box_leftup": 0, "box_area": img_w * img_h, "easyocr_text": full_page_text}]
+                        final_processed_data = [{
+                            "label": "plain_text_1", "confidence": 1.0, 
+                            "box_xyxy": [0, 0, img_w, img_h], 
+                            "box_top_left": (0, 0),
+                            "box_bottom_right": (img_w, img_h),
+                            "box_center": (img_w/2, img_h/2), 
+                            "box_area": img_w * img_h, 
+                            "easyocr_text": full_page_text
+                        }]
                         json_save_path = os.path.join(pdf_output_dir, f"{page_image_name}_result.json")
                         with open(json_save_path, "w", encoding="utf-8") as f:
                             json.dump(final_processed_data, f, indent=4, ensure_ascii=False)
