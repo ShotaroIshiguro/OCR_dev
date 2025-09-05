@@ -1,0 +1,30 @@
+{
+  "family": "my-python-app-task",
+  "taskRoleArn": "arn:aws:iam::220749297321:role/ECSTaskSSMRole",
+  "networkMode": "bridge",
+  "containerDefinitions": [
+    {
+      "name": "my-python-app-container",
+      "image": "IMAGE_URI_PLACEHOLDER",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "logConfiguration": {
+          "logDriver": "awslogs",
+          "options": {
+              "awslogs-group": "/ecs/my-python-app",
+              "awslogs-region": "ap-southeast-2",
+              "awslogs-stream-prefix": "ecs"
+          }
+      }
+    }
+  ],
+  "requiresCompatibilities": ["EC2"],
+  "cpu": "256",
+  "memory": "512"
+}
