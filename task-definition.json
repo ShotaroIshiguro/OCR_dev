@@ -25,6 +25,6 @@
     }
   ],
   "requiresCompatibilities": ["EC2"],
-  "cpu": "1024",
-  "memory": "3072"
+  "cpu": "2048",
+  "memory": "7168"
 }

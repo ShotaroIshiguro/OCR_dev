@@ -7,8 +7,8 @@ on:
 env:
   AWS_REGION: ap-southeast-2                  # AWSリージョン
   ECR_REPOSITORY: ecs-test                  # ECRリポジトリ名
-  ECS_CLUSTER: 0905-ecs-test3                # ECSクラスター名
-  ECS_SERVICE: 0905-ecs-service3                 # ECSサービス名
+  ECS_CLUSTER: 0905-ecs-test                # ECSクラスター名
+  ECS_SERVICE: 0905-ecs-service                 # ECSサービス名
   ECS_TASK_DEFINITION: task-definition.json    # タスク定義ファイル名
   CONTAINER_NAME: my-python-app-container-test            # タスク定義内のコンテナ名
 
