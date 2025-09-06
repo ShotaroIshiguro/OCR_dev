@@ -22,3 +22,5 @@ torchvision
 doclayout-yolo
 huggingface-hub
 huggingface
+
+boto3

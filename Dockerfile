@@ -37,4 +37,4 @@ COPY . .
 # 6. コンテナ実行コマンドの指定
 # --------------------
 # コンテナが起動したときに、このPythonスクリプトを実行します。
-CMD ["python", "YOLO_EASY_PyMuPDF_V1.py"]
+CMD ["python", "YOLO_EASY_PyMuPDF_V1_EVENT.py"]
