@@ -6,8 +6,8 @@
     {
       "name": "my-python-app-container-test",
       "image": "IMAGE_URI_PLACEHOLDER",
-      "cpu": 3072,
-      "memory": 15360,
+      "cpu": 7168,
+      "memory": 30720,
       "portMappings": [
         {
           "containerPort": 8000,
